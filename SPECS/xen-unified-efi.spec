@@ -1,16 +1,20 @@
 Summary: Xen is a virtual machine monitor
-Name:    xen-unified-efi
+Name:    xen-unified
 Version: 4.13.1
 %define base_release 9.10.2
 Release: %{base_release}%{?dist}
 License: GPLv2 and LGPLv2+ and BSD
 URL:     http://www.xenproject.org
-Source0: xen-unified-efi-%{version}.tar.gz
+Source0: %{name}-%{version}.tar.gz
 Source1: xen.cfg
 
 BuildRequires: binutils
 BuildRequires: xen-hypervisor >= %{version}-%{base_release}
 BuildRequires: kernel >= 4.19.19-7.0.9.1
+
+%define _initrd initrd-4.19.0+1.img
+%define _kernel vmlinuz-4.19.0+1
+%define _unified_xen 
 
 %description
 Xen, dom0 kernel, initrd and xen.cfg bundled into an EFI binary.
@@ -28,11 +32,19 @@ round_nearest_8kb() {
     printf "0x%02lx" $((($x + (4096*2)) & ~(4096-1)))
 }
 
-find /boot/
+CONFIG=%{buildroot}/boot/efi/xen.cfg
+cat >> ${CONFIG} <<END
+[global]
+default=xcp-ng
 
-CONFIG=%{SOURCE1}
-KERNEL=/boot/vmlinuz-4.19.0+1
-INITRD=/boot/initrd-4.19.0+1.img
+[xcp-ng]
+options=console=vga,com1 com1=115200,8n1 iommu=verbose ucode=scan flask=disabled vga=mode-0x0311 loglvl=all conring_size=2097152
+kernel=%{_kernel} root=LABEL=root-hlexln ro nolvm hpet=disable console=tty0 console=hvc0
+ramdisk=%{_initrd}
+END
+
+KERNEL=/boot/%{_kernel}
+INITRD=/boot/%{_initrd}
 XEN=/boot/efi/xen-%{version}-%{base_release}.efi
 
 # Start at end of .pad section, see xen docs/misc/efi.pandoc
@@ -58,18 +70,17 @@ objcopy                                             \
 	--add-section .ramdisk=${INITRD}                \
 	--change-section-vma .ramdisk=${INITRD_START}   \
 	${XEN}                                          \
-	%{buildroot}/boot/efi/xen.unified.efi
+    %{name}-%{version}-%{base_release}.efi
 
 %install
+mkdir -p %{buildroot}/boot/efi/
 
-cp %{SOURCE1} %{buildroot}/boot/efi/xen.cfg
-
-cp /boot/efi/xen-%{version}-%{base_release}.efi %{buildroot}/boot/efi/%{name}-%{version}-%{base_release}.unified.efi
+cp %{_builddir}/%{name}-%{version}/%{name}-%{version}-%{base_release}.efi \
+    %{buildroot}/boot/efi/%{name}-%{version}-%{base_release}.efi
 
 %files
-# For EFI
-/boot/efi/%{name}-%{version}-%{base_release}.unified.efi
-/boot/efi/xen.cfg
+# The unified image
+/boot/efi/%{name}-%{version}-%{base_release}.efi
 
 %changelog
 * Thu May 13 2021 Bobby Eshleman <bobby.eshleman@gmail.com> - 4.13.1-9.9.1
