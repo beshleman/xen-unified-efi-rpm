@@ -44,7 +44,6 @@ ramdisk=%{_initrd}
 END
 
 KERNEL=/boot/%{_kernel}
-INITRD=/boot/%{_initrd}
 XEN=/boot/efi/xen-%{version}-%{base_release}.efi
 
 # Start at end of .pad section, see xen docs/misc/efi.pandoc
@@ -54,33 +53,28 @@ CONFIG_END=$((${CONFIG_START} + ${CONFIG_SIZE}))
 KERNEL_START=$(round_nearest_8kb ${CONFIG_END})
 KERNEL_SIZE=$(cat ${KERNEL} | wc -c)
 KERNEL_END=$((${KERNEL_START} + ${KERNEL_SIZE}))
-INITRD_START=$(round_nearest_8kb ${KERNEL_END})
-INITRD_SIZE=$(cat ${INITRD} | wc -c)
-INITRD_END=$((${KERNEL_START} + ${INITRD_SIZE}))
 
 printf "config @ 0x%02lx - 0x%02lx\n" ${CONFIG_START} ${CONFIG_END}
 printf "kernel @ 0x%02lx - 0x%02lx\n" ${KERNEL_START} ${KERNEL_END}
-printf "initrd @ 0x%02lx - 0x%02lx\n" ${INITRD_START} ${INITRD_END}
 
 objcopy                                             \
 	--add-section .config=${CONFIG}                 \
 	--change-section-vma .config=${CONFIG_START}    \
 	--add-section .kernel=${KERNEL}                 \
 	--change-section-vma .kernel=${KERNEL_START}    \
-	--add-section .ramdisk=${INITRD}                \
-	--change-section-vma .ramdisk=${INITRD_START}   \
 	${XEN}                                          \
     %{name}-%{version}-%{base_release}.efi
 
 %install
-mkdir -p %{buildroot}/boot/efi/
+mkdir -p %{buildroot}/boot/efi/EFI/xenserver/
 
+cp /boot/%{_initrd} %{buildroot}/boot/efi/EFI/xenserver/%{_initrd}
 cp %{_builddir}/%{name}-%{version}/%{name}-%{version}-%{base_release}.efi \
-    %{buildroot}/boot/efi/%{name}-%{version}-%{base_release}.efi
+    %{buildroot}/boot/efi/EFI/xenserver/%{name}-%{version}-%{base_release}.efi
 
 %files
-# The unified image
-/boot/efi/%{name}-%{version}-%{base_release}.efi
+/boot/efi/EFI/xenserver/%{name}-%{version}-%{base_release}.efi
+/boot/efi/EFI/xenserver/%{_initrd}
 
 %changelog
 * Thu May 13 2021 Bobby Eshleman <bobby.eshleman@gmail.com> - 4.13.1-9.9.1
