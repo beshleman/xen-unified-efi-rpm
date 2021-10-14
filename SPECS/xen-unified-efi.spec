@@ -1,3 +1,5 @@
+%define with_test_signing 1
+
 Summary: Xen is a virtual machine monitor
 Name:    xen-unified
 Version: 4.13.1
@@ -7,14 +9,21 @@ License: GPLv2 and LGPLv2+ and BSD
 URL:     http://www.xenproject.org
 Source0: %{name}-%{version}.tar.gz
 Source1: xen.cfg
+%if %with_test_signing
+Source2: test_certs.tar
+%endif
 
 BuildRequires: binutils
 BuildRequires: xen-hypervisor >= %{version}-%{base_release}
 BuildRequires: kernel >= 4.19.19-7.0.9.1
 
-%define _initrd initrd-4.19.0+1.img
+%if %with_test_signing
+BuildRequires: pesign
+BuildRequires: openssl
+%endif
+
 %define _kernel vmlinuz-4.19.0+1
-%define _unified_xen 
+%define xen_unified %{name}-%{version}-%{base_release}.unified.efi
 
 %description
 Xen, dom0 kernel, initrd and xen.cfg bundled into an EFI binary.
@@ -23,58 +32,68 @@ Xen, dom0 kernel, initrd and xen.cfg bundled into an EFI binary.
 %autosetup -p1
 %build
 
+set -e
+
 mkdir -p %{buildroot}/boot/efi/
 
-# Round up x to nearest 8KB (0x2000).  8KB is arbitrary, the only thing that
-# matters is that the sections don't overlap.
-round_nearest_8kb() {
-    local x=$1
-    printf "0x%02lx" $((($x + (4096*2)) & ~(4096-1)))
-}
+KERNEL=/boot/%{_kernel}
+XEN=/boot/xen-%{version}-%{base_release}.efi
 
-CONFIG=%{buildroot}/boot/efi/xen.cfg
-cat >> ${CONFIG} <<END
+# Start at end of .pad section, see xen docs/misc/efi.pandoc
+KERNEL_START=$(objdump -h ${XEN} | perl -ane '/\.pad/ && printf "0x%016x\n", hex($F[2]) + hex($F[3])')
+KERNEL_SIZE=$(cat ${KERNEL} | wc -c)
+KERNEL_END=$((${KERNEL_START} + ${KERNEL_SIZE}))
+
+printf "kernel @ 0x%02lx - 0x%02lx\n" ${KERNEL_START} ${KERNEL_END}
+
+objcopy                                             \
+	--add-section .kernel=${KERNEL}                 \
+	--change-section-vma .kernel=${KERNEL_START}    \
+	${XEN}                                          \
+    %{xen_unified}
+
+%if %with_test_signing
+
+tar xvf %{SOURCE2}
+
+CA_NICK="Vates Test CA"
+SIGNER_NICK="Vates Test"
+
+certdir=test_certs/
+certutil -d "${certdir}" -N
+certutil -d "${certdir}" -L -n "${CA_NICK}" -r > ca.der
+
+tmpfile=$(mktemp)
+
+pesign                              \
+    -s                              \
+    -i "%{xen_unified}"             \
+    -o "${tmpfile}"                 \
+    -a                              \
+    -c "${SIGNER_NICK}"             \
+    -n "${certdir}"
+
+install -m 644 ${tmpfile} %{xen_unified}
+%endif
+
+%install
+mkdir -p %{buildroot}/boot/efi/EFI/xenserver/
+
+cp %{_builddir}/%{name}-%{version}/%{name}-%{version}-%{base_release}.efi \
+    %{buildroot}/boot/efi/EFI/xenserver/%{name}-%{version}-%{base_release}.efi
+
+cat > /boot/efi/EFI/xenserver/xen.cfg <<END
 [global]
 default=xcp-ng
 
 [xcp-ng]
 options=console=vga,com1 com1=115200,8n1 iommu=verbose ucode=scan flask=disabled vga=mode-0x0311 loglvl=all conring_size=2097152
-kernel=%{_kernel} root=LABEL=root-hlexln ro nolvm hpet=disable console=tty0 console=hvc0
-ramdisk=%{_initrd}
+kernel=vmlinuz-4.19-xen root=LABEL=$(basename /dev/disk/by-label/root-*) ro nolvm hpet=disable console=tty0 console=hvc0
+ramdisk=initrd-4.19.0+1.img
 END
 
-KERNEL=/boot/%{_kernel}
-XEN=/boot/efi/xen-%{version}-%{base_release}.efi
-
-# Start at end of .pad section, see xen docs/misc/efi.pandoc
-CONFIG_START=$(objdump -h ${XEN} | perl -ane '/\.pad/ && printf "0x%016x\n", hex($F[2]) + hex($F[3])')
-CONFIG_SIZE=$(cat ${CONFIG} | wc -c)
-CONFIG_END=$((${CONFIG_START} + ${CONFIG_SIZE}))
-KERNEL_START=$(round_nearest_8kb ${CONFIG_END})
-KERNEL_SIZE=$(cat ${KERNEL} | wc -c)
-KERNEL_END=$((${KERNEL_START} + ${KERNEL_SIZE}))
-
-printf "config @ 0x%02lx - 0x%02lx\n" ${CONFIG_START} ${CONFIG_END}
-printf "kernel @ 0x%02lx - 0x%02lx\n" ${KERNEL_START} ${KERNEL_END}
-
-objcopy                                             \
-	--add-section .config=${CONFIG}                 \
-	--change-section-vma .config=${CONFIG_START}    \
-	--add-section .kernel=${KERNEL}                 \
-	--change-section-vma .kernel=${KERNEL_START}    \
-	${XEN}                                          \
-    %{name}-%{version}-%{base_release}.efi
-
-%install
-mkdir -p %{buildroot}/boot/efi/EFI/xenserver/
-
-cp /boot/%{_initrd} %{buildroot}/boot/efi/EFI/xenserver/%{_initrd}
-cp %{_builddir}/%{name}-%{version}/%{name}-%{version}-%{base_release}.efi \
-    %{buildroot}/boot/efi/EFI/xenserver/%{name}-%{version}-%{base_release}.efi
-
 %files
-/boot/efi/EFI/xenserver/%{name}-%{version}-%{base_release}.efi
-/boot/efi/EFI/xenserver/%{_initrd}
+/boot/efi/EFI/xenserver/%{name}-%{version}-%{base_release}.unified.efi
 
 %changelog
 * Thu May 13 2021 Bobby Eshleman <bobby.eshleman@gmail.com> - 4.13.1-9.9.1
