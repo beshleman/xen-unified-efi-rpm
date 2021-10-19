@@ -13,6 +13,8 @@ Source1: xen.cfg
 Source2: test_certs.tar
 %endif
 
+%define efi_boot_entry xcp-ng-%{version}-%{base_release}-unified-no-grub
+
 # Binutils 2.36 breaks xen.efi since both attempt to create reloc tables
 # so it MUST 2.35 w/ the .buildid patch
 BuildRequires: binutils == 2.35-5.xcpng8.2.2
@@ -21,12 +23,16 @@ BuildRequires: binutils == 2.35-5.xcpng8.2.2
 BuildRequires: xen-hypervisor >= %{version}-%{base_release}.xcpng8.2
 BuildRequires: kernel >= 4.19.19-7.0.9.1.xcpng8.2
 
+Requires: efibootmgr
+
 %if %with_test_signing
 BuildRequires: sbsigntools
 
 %package test-certs
 Summary: The Test Certificates for the Unified EFI Xen Hypervisor
+Requires: sbsigntools
 %description test-certs
+
 
 This package contains the test (NOT FOR PRODUCTION!) certificates for
 the unified Xen EFI binary.
@@ -86,22 +92,29 @@ cp %{_builddir}/%{name}-%{version}/%{name}-%{version}-%{base_release}.unified.ef
     %{buildroot}/boot/efi/EFI/xenserver/%{name}-%{version}-%{base_release}.unified.efi
 
 %if %with_test_signing
-mkdir -p %{buildroot}/test-certs/
+mkdir -p %{buildroot}/var/lib/secureboot/{keys,x509}
+
 install -m 644 %{_builddir}/test_certs/test.der \
      %{buildroot}/boot/efi/EFI/xenserver/test.der
 
 install -m 644 %{_builddir}/test_certs/test.key \
-    %{buildroot}/test-certs/test.key
+    %{buildroot}/var/lib/secureboot/x509/test.key
+
 install -m 644 %{_builddir}/test_certs/test.der \
-     %{buildroot}/test-certs/test.der
+     %{buildroot}/var/lib/secureboot/x509/test.der
+
 install -m 644 %{_builddir}/test_certs/test.pem \
-     %{buildroot}/test-certs/test.pem
+     %{buildroot}/var/lib/secureboot/x509/test.pem
+
 install -m 644 %{_builddir}/test_certs/db.auth \
-     %{buildroot}/test-certs/test-db.auth
+     %{buildroot}/var/lib/secureboot/keys/db.auth
+
 install -m 644 %{_builddir}/test_certs/PK.auth \
-     %{buildroot}/test-certs/test-PK.auth
+     %{buildroot}/var/lib/secureboot/keys/PK.auth
+
 install -m 644 %{_builddir}/test_certs/KEK.auth \
-     %{buildroot}/test-certs/test-KEK.auth
+     %{buildroot}/var/lib/secureboot/keys/KEK.auth
+
 %endif
 
 %post
@@ -115,18 +128,39 @@ kernel=vmlinuz-4.19-xen root=LABEL=$(basename /dev/disk/by-label/root-*) ro nolv
 ramdisk=initrd-4.19.0+1.img
 END
 
+diskpart=$(findmnt /boot/efi | grep \/boot\/efi | cut -d ' ' -f2)
+disk=${diskpart//[0-9]/}
+part=${diskpart//[^0-9]/}
+
+efibootmgr \
+    --create \
+    --disk ${disk} \
+    --part ${part} \
+    --loader /EFI/xenserver/%{name}-%{version}-%{base_release}.unified.efi \
+    --label "%{efi_boot_entry}" \
+    --verbose
+
+%postun
+bootnum=$(efibootmgr | sed -n 's/^Boot\([0-9a-f]\{1,4\}\).*%{efi_boot_entry}$/\1/p')
+efibootmgr --delete-bootnum --bootnum ${bootnum}
+
+%if %with_test_signing
+%post test-certs
+sbkeysync --pk --verbose --keystore /var/lib/secureboot/keys/
+%endif
+
 %files
 /boot/efi/EFI/xenserver/%{name}-%{version}-%{base_release}.unified.efi
 
 %if %with_test_signing
 %files test-certs
 /boot/efi/EFI/xenserver/test.der
-/test-certs/test.pem
-/test-certs/test.key
-/test-certs/test.der
-/test-certs/test-db.auth
-/test-certs/test-PK.auth
-/test-certs/test-KEK.auth
+/var/lib/secureboot/x509/test.pem
+/var/lib/secureboot/x509/test.key
+/var/lib/secureboot/x509/test.der
+/var/lib/secureboot/keys/db.auth
+/var/lib/secureboot/keys/PK.auth
+/var/lib/secureboot/keys/KEK.auth
 %endif
 
 %changelog
